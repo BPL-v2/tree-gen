@@ -14,12 +14,49 @@ import (
 	svg "github.com/ajstarks/svgo"
 )
 
+func fixName(name string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(name), "-atlas", ""), ".0.json", ".svg")
+}
+
 func main() {
-	http.Handle("/", http.HandlerFunc(circle))
-	err := http.ListenAndServe(":2003", nil)
+	// create dirs if not existing
+	err := os.MkdirAll("svg/atlas", os.ModePerm)
 	if err != nil {
-		log.Fatal("ListenAndServe:", err)
+		log.Fatal(err)
 	}
+	err = os.MkdirAll("svg/passives", os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// loop over all json files in atlastree and generate svg files
+	entries, err := os.ReadDir("atlastree")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, file := range entries {
+		if strings.HasSuffix(file.Name(), ".0.json") || strings.HasSuffix(file.Name(), ".0-atlas.json") {
+			fmt.Printf("Generating SVG for %s\n", file.Name())
+			DrawTree("atlastree/"+file.Name(), "svg/atlas/"+fixName(file.Name()))
+		}
+	}
+
+	entries, err = os.ReadDir("skilltree")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, file := range entries {
+		if strings.HasSuffix(file.Name(), ".0.json") {
+			fmt.Printf("Generating SVG for %s\n", file.Name())
+			DrawTree("skilltree/"+file.Name(), "svg/passives/"+fixName(file.Name()))
+		}
+	}
+
+	// http.Handle("/", http.HandlerFunc(circle))
+	// err := http.ListenAndServe(":2003", nil)
+	// if err != nil {
+	// 	log.Fatal("ListenAndServe:", err)
+	// }
 }
 
 type TreeDrawer struct {
@@ -31,7 +68,7 @@ func InitTreeDrawer(w http.ResponseWriter) *TreeDrawer {
 	w.Header().Set("Content-Type", "image/svg+xml")
 	s := svg.New(w)
 
-	file, err := os.Open("atlas-tree.json")
+	file, err := os.Open("atlastree/3.25.0.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -41,10 +78,86 @@ func InitTreeDrawer(w http.ResponseWriter) *TreeDrawer {
 	if err != nil {
 		log.Fatal(err)
 	}
-	FixTree(&tree)
-	fmt.Printf("Tree size: %d x %d\n", tree.MaxX-tree.MinX, tree.MaxY-tree.MinY)
+	MoveAscendancyTrees(&tree)
 	s.Start(1000, 1000, fmt.Sprintf("viewBox=\"%d %d %d %d\"", tree.MinX, tree.MinY, tree.MaxX-tree.MinX, tree.MaxY-tree.MinY))
-	s.Rect(tree.MinX, tree.MinY, tree.MaxX-tree.MinX, tree.MaxY-tree.MinY, "fill:black")
+
+	s.Def()
+	s.Style("text/css", `
+		/* Node styles */
+		circle {
+			fill: #3e3e3e;
+			stroke: #8b8b8b;
+			stroke-width: 2;
+		}
+
+		circle.keystone {
+			fill: #b8860b;
+			stroke: #ffd700;
+			stroke-width: 3;
+		}
+
+		circle.mastery {
+			fill: #4169e1;
+			stroke: #87ceeb;
+			stroke-width: 2;
+		}
+
+		circle.isolated {
+			fill: #ff6b6b;
+			stroke: #ff4757;
+			stroke-width: 2;
+		}
+
+		circle.ascendancy {
+			fill: #9932cc;
+			stroke: #ba55d3;
+			stroke-width: 2;
+		}
+
+		/* Connection styles */
+		line, path {
+			stroke: #666666;
+			stroke-width: 2;
+			fill: none;
+		}
+
+		line.ascendancy, path.ascendancy {
+			stroke: #9932cc;
+			stroke-width: 3;
+		}
+
+		/* Hover effects */
+		circle:hover {
+			stroke-width: 4;
+			filter: brightness(1.2);
+		}
+
+		line:hover, path:hover {
+			stroke-width: 4;
+			filter: brightness(1.2);
+		}
+
+		/* Group orbit styles */
+		circle[fill="none"] {
+			stroke: #228b22;
+			stroke-width: 1;
+			stroke-dasharray: 5,5;
+		}
+
+		/* Mastery image styles */
+		image.mastery {
+			filter: brightness(1.0);
+			border: 2px solid #4169e1;
+			border-radius: 50%;
+		}
+
+		image.mastery:hover {
+			filter: brightness(1.3);
+			border-width: 3px;
+		}
+	`)
+	s.DefEnd()
+
 	return &TreeDrawer{
 		s:    s,
 		Tree: tree,
@@ -78,7 +191,7 @@ func Intersect[T comparable](x, y []T) []T {
 	return intersection
 }
 
-func FixTree(Tree *Tree) {
+func MoveAscendancyTrees(Tree *Tree) {
 	ascendancyStarts := make([]string, 0)
 	ascendancyMap := make(map[string][]string)
 	minx, miny, maxx, maxy := 0, 0, 0, 0
@@ -138,9 +251,6 @@ func FixTree(Tree *Tree) {
 			Tree.Groups[groupId] = group
 		}
 	}
-
-	fmt.Printf("Tree size: %d x %d\n", Tree.MaxX-Tree.MinX, Tree.MaxY-Tree.MinY)
-
 }
 
 func GetCoordinates(node Node, tree Tree) (int, int, error) {
@@ -169,27 +279,29 @@ func (d *TreeDrawer) DrawNode(node Node) {
 		return
 	}
 	classes := []string{}
+	extras := []string{}
 	if !node.HasConnections() {
 		classes = append(classes, "isolated")
 	}
 	if node.AscendancyName != nil {
 		classes = append(classes, "ascendancy")
-		classes = append(classes, *node.AscendancyName)
+		extras = append(extras, *node.AscendancyName)
 	}
 	if node.IsNotable {
-		d.DrawPassive(node, 50, classes)
-	} else if node.IsKeystone {
+		d.DrawPassive(node, 50, classes, extras)
+	} else if node.IsKeystone || node.IsWormhole {
 		classes = append(classes, "keystone")
-		d.DrawPassive(node, 80, classes)
+		d.DrawPassive(node, 80, classes, extras)
 	} else if node.IsMastery {
 		classes = append(classes, "mastery")
-		d.DrawPassive(node, 40, classes)
+		extras = append(extras, *node.Name)
+		d.DrawPassive(node, 30, classes, extras)
 	} else {
-		d.DrawPassive(node, 30, classes)
+		d.DrawPassive(node, 30, classes, extras)
 	}
 }
 
-func (d *TreeDrawer) DrawPassive(node Node, radius int, cls []string) {
+func (d *TreeDrawer) DrawPassive(node Node, radius int, cls []string, extras []string) {
 	x, y, err := d.GetCoordinates(node)
 	if err != nil {
 		return
@@ -197,6 +309,9 @@ func (d *TreeDrawer) DrawPassive(node Node, radius int, cls []string) {
 	attr := fmt.Sprintf("id=\"n-%d\"", node.Skill)
 	if len(cls) > 0 {
 		attr += fmt.Sprintf(" class=\"%s\"", strings.Join(cls, " "))
+	}
+	if len(extras) > 0 {
+		attr += fmt.Sprintf(" data-extras=\"%s\"", strings.Join(extras, ","))
 	}
 	d.s.Circle(x, y, radius, attr)
 }
@@ -212,7 +327,7 @@ func (d *TreeDrawer) DrawConnections(node Node) {
 }
 
 func (d *TreeDrawer) DrawConnection(node1 Node, node2 Node) {
-	if !node1.ShouldDraw() || !node2.ShouldDraw() || !node1.ShouldConnect() || !node2.ShouldConnect() {
+	if !node1.ShouldDraw() || !node2.ShouldDraw() || !node1.ShouldConnectTo(node2) {
 		return
 	}
 	attr := fmt.Sprintf("id=\"c-%d-%d\"", node1.Skill, node2.Skill)
@@ -252,7 +367,6 @@ func (d *TreeDrawer) DrawArc(node1 Node, node2 Node, attr string) {
 	node1Angle := GetOrbitAngle(node1.OrbitIndex, d.Tree.Constants.SkillsPerOrbit[node1.Orbit])
 	node2Angle := GetOrbitAngle(node2.OrbitIndex, d.Tree.Constants.SkillsPerOrbit[node2.Orbit])
 
-	// Determine arc direction (choose shorter path)
 	angleDiff := node2Angle - node1Angle
 	if angleDiff > math.Pi {
 		angleDiff -= 2 * math.Pi
@@ -287,26 +401,69 @@ func circle(w http.ResponseWriter, req *http.Request) {
 		intJ, _ := strconv.Atoi(nodeids[j])
 		return intI < intJ
 	})
-	drawer.s.Gstyle("stroke:white;stroke-width:4;fill:none")
+	drawer.s.Gid("connections")
 	for _, nodeid := range nodeids {
 		node := drawer.Tree.Nodes[nodeid]
-		// if node.Skill != 50340 && node.Skill != 5065 {
-		// 	continue
-		// }
-
 		drawer.DrawConnections(node)
 	}
 	drawer.s.Gend()
-	drawer.s.Gstyle("fill:grey")
+	drawer.s.Gid("nodes")
 	for _, nodeid := range nodeids {
 		node := drawer.Tree.Nodes[nodeid]
-		// if node.Skill != 50340 && node.Skill != 5065 {
-		// 	continue
-		// }
 		drawer.DrawNode(node)
-
 	}
 	drawer.s.Gend()
 
+	drawer.End()
+}
+
+func DrawTree(fileName string, out string) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+	tree := Tree{}
+	err = json.NewDecoder(file).Decode(&tree)
+	if err != nil {
+		log.Fatal(err)
+	}
+	MoveAscendancyTrees(&tree)
+
+	outFile, err := os.Create(out)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer outFile.Close()
+
+	s := svg.New(outFile)
+	s.Startraw(fmt.Sprintf("viewBox=\"%d %d %d %d\"", tree.MinX, tree.MinY, tree.MaxX-tree.MinX, tree.MaxY-tree.MinY))
+
+	drawer := &TreeDrawer{
+		s:    s,
+		Tree: tree,
+	}
+
+	nodeids := make([]string, 0, len(drawer.Tree.Nodes))
+	for nodeid := range drawer.Tree.Nodes {
+		nodeids = append(nodeids, nodeid)
+	}
+	sort.Slice(nodeids, func(i, j int) bool {
+		intI, _ := strconv.Atoi(nodeids[i])
+		intJ, _ := strconv.Atoi(nodeids[j])
+		return intI < intJ
+	})
+	drawer.s.Gid("connections")
+	for _, nodeid := range nodeids {
+		node := drawer.Tree.Nodes[nodeid]
+		drawer.DrawConnections(node)
+	}
+	drawer.s.Gend()
+	drawer.s.Gid("nodes")
+	for _, nodeid := range nodeids {
+		node := drawer.Tree.Nodes[nodeid]
+		drawer.DrawNode(node)
+	}
+	drawer.s.Gend()
 	drawer.End()
 }

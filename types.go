@@ -96,8 +96,8 @@ func (n Node) ShouldDraw() bool {
 	return n.ClassStartIndex == nil && !n.IsProxy && !(n.ExpansionJewel != nil && n.ExpansionJewel.Size < 2)
 }
 
-func (n Node) ShouldConnect() bool {
-	return !n.IsMastery && n.ClassStartIndex == nil && !n.IsWormhole
+func (n1 Node) ShouldConnectTo(n2 Node) bool {
+	return !n1.IsMastery && n1.ClassStartIndex == nil && !n2.IsMastery && n2.ClassStartIndex == nil && (!n1.IsWormhole || !n2.IsWormhole)
 }
 
 func (n Node) HasConnections() bool {
