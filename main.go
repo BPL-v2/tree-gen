@@ -15,7 +15,7 @@ import (
 )
 
 func fixName(name string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(strings.ToLower(name), "-atlas", ""), ".0.json", ".svg")
+	return strings.ReplaceAll(name, ".json", ".svg")
 }
 
 func main() {
@@ -28,6 +28,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	err = os.MkdirAll("json/atlas", os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = os.MkdirAll("json/passives", os.ModePerm)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// loop over all json files in atlastree and generate svg files
 	entries, err := os.ReadDir("atlastree")
@@ -35,9 +43,10 @@ func main() {
 		log.Fatal(err)
 	}
 	for _, file := range entries {
-		if strings.HasSuffix(file.Name(), ".0.json") || strings.HasSuffix(file.Name(), ".0-atlas.json") {
+		if strings.HasSuffix(file.Name(), ".json") {
 			fmt.Printf("Generating SVG for %s\n", file.Name())
 			DrawTree("atlastree/"+file.Name(), "svg/atlas/"+fixName(file.Name()))
+			SaveCompactJson("atlastree/"+file.Name(), "json/atlas/"+file.Name())
 		}
 	}
 
@@ -46,9 +55,10 @@ func main() {
 		log.Fatal(err)
 	}
 	for _, file := range entries {
-		if strings.HasSuffix(file.Name(), ".0.json") {
+		if strings.HasSuffix(file.Name(), ".json") {
 			fmt.Printf("Generating SVG for %s\n", file.Name())
 			DrawTree("skilltree/"+file.Name(), "svg/passives/"+fixName(file.Name()))
+			SaveCompactJson("skilltree/"+file.Name(), "json/passives/"+file.Name())
 		}
 	}
 
@@ -193,14 +203,24 @@ func Intersect[T comparable](x, y []T) []T {
 
 func MoveAscendancyTrees(Tree *Tree) {
 	ascendancyStarts := make([]string, 0)
+	bloodlineStarts := make([]string, 0)
 	ascendancyMap := make(map[string][]string)
+	bloodlineMap := make(map[string][]string)
 	minx, miny, maxx, maxy := 0, 0, 0, 0
 	for nodeid, node := range Tree.Nodes {
 		if node.AscendancyName != nil {
-			ascendancyMap[*node.AscendancyName] = append(ascendancyMap[*node.AscendancyName], nodeid)
+			if node.IsBloodline {
+				bloodlineMap[*node.AscendancyName] = append(bloodlineMap[*node.AscendancyName], nodeid)
+			} else {
+				ascendancyMap[*node.AscendancyName] = append(ascendancyMap[*node.AscendancyName], nodeid)
+			}
 		}
 		if node.IsAscendancyStart {
-			ascendancyStarts = append(ascendancyStarts, nodeid)
+			if node.IsBloodline {
+				bloodlineStarts = append(bloodlineStarts, nodeid)
+			} else {
+				ascendancyStarts = append(ascendancyStarts, nodeid)
+			}
 		}
 		if node.ShouldDraw() && node.AscendancyName == nil {
 			x, y, err := GetCoordinates(node, *Tree)
@@ -227,14 +247,24 @@ func MoveAscendancyTrees(Tree *Tree) {
 	Tree.MaxX = maxx + 200
 	Tree.MaxY = maxy + 200
 
-	centerGroups := make([]string, 0)
+	ascendancyCenterGroups := make([]string, 0)
+	bloodlineCenterGroups := make([]string, 0)
 	ascendancyToGroups := make(map[string][]string)
+	bloodlineToGroups := make(map[string][]string)
 	for groupId, group := range Tree.Groups {
 		for ascendancyName, nodeids := range ascendancyMap {
 			if HasOverlap(group.Nodes, nodeids) {
 				ascendancyToGroups[ascendancyName] = append(ascendancyToGroups[ascendancyName], groupId)
 				if HasOverlap(group.Nodes, ascendancyStarts) {
-					centerGroups = append(centerGroups, groupId)
+					ascendancyCenterGroups = append(ascendancyCenterGroups, groupId)
+				}
+			}
+		}
+		for bloodlineName, nodeids := range bloodlineMap {
+			if HasOverlap(group.Nodes, nodeids) {
+				bloodlineToGroups[bloodlineName] = append(bloodlineToGroups[bloodlineName], groupId)
+				if HasOverlap(group.Nodes, bloodlineStarts) {
+					bloodlineCenterGroups = append(bloodlineCenterGroups, groupId)
 				}
 			}
 		}
@@ -242,7 +272,18 @@ func MoveAscendancyTrees(Tree *Tree) {
 	dist := 1000.0
 	centerX, centerY := float64(Tree.MaxX)-dist, -float64(Tree.MaxY)+dist
 	for _, groupIds := range ascendancyToGroups {
-		largest := Intersect(groupIds, centerGroups)[0]
+		largest := Intersect(groupIds, ascendancyCenterGroups)[0]
+		largestGroup := Tree.Groups[largest]
+		for _, groupId := range groupIds {
+			group := Tree.Groups[groupId]
+			group.X = centerX + (group.X - largestGroup.X)
+			group.Y = centerY + (group.Y - largestGroup.Y)
+			Tree.Groups[groupId] = group
+		}
+	}
+	centerX, centerY = float64(Tree.MinX)+dist, -float64(Tree.MaxY)+dist
+	for _, groupIds := range bloodlineToGroups {
+		largest := Intersect(groupIds, bloodlineCenterGroups)[0]
 		largestGroup := Tree.Groups[largest]
 		for _, groupId := range groupIds {
 			group := Tree.Groups[groupId]
@@ -285,6 +326,10 @@ func (d *TreeDrawer) DrawNode(node Node) {
 	}
 	if node.AscendancyName != nil {
 		classes = append(classes, "ascendancy")
+		extras = append(extras, *node.AscendancyName)
+	}
+	if node.IsBloodline {
+		classes = append(classes, "bloodline")
 		extras = append(extras, *node.AscendancyName)
 	}
 	if node.IsNotable {
@@ -390,31 +435,28 @@ func (d *TreeDrawer) DrawGroup(group Group) {
 	}
 }
 
-func circle(w http.ResponseWriter, req *http.Request) {
-	drawer := InitTreeDrawer(w)
-	nodeids := make([]string, 0, len(drawer.Tree.Nodes))
-	for nodeid := range drawer.Tree.Nodes {
-		nodeids = append(nodeids, nodeid)
+func SaveCompactJson(fileName string, outFileName string) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		log.Fatal(err)
 	}
-	sort.Slice(nodeids, func(i, j int) bool {
-		intI, _ := strconv.Atoi(nodeids[i])
-		intJ, _ := strconv.Atoi(nodeids[j])
-		return intI < intJ
-	})
-	drawer.s.Gid("connections")
-	for _, nodeid := range nodeids {
-		node := drawer.Tree.Nodes[nodeid]
-		drawer.DrawConnections(node)
+	defer file.Close()
+	compactTree := CompactTree{}
+	err = json.NewDecoder(file).Decode(&compactTree)
+	if err != nil {
+		log.Fatal(err)
 	}
-	drawer.s.Gend()
-	drawer.s.Gid("nodes")
-	for _, nodeid := range nodeids {
-		node := drawer.Tree.Nodes[nodeid]
-		drawer.DrawNode(node)
+	outFile, err := os.Create(outFileName)
+	if err != nil {
+		log.Fatal(err)
 	}
-	drawer.s.Gend()
-
-	drawer.End()
+	defer outFile.Close()
+	encoder := json.NewEncoder(outFile)
+	encoder.SetIndent("", "")
+	err = encoder.Encode(compactTree)
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func DrawTree(fileName string, out string) {

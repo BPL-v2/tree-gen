@@ -19,11 +19,17 @@ echo "GitHub repo: $GITHUB_REPO"
 echo "Save directory: $SAVE_DIR"
 echo
 
+# Check if jq is available for JSON minification
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: jq is required for JSON minification but not installed."
+    echo "Please install jq: sudo apt install jq"
+    exit 1
+fi
+
 # Create the save directory if it doesn't exist
 mkdir -p "$SAVE_DIR"
 
 # Get all tags and sort them from remote repository
-echo "Getting list of tags from remote repository..."
 tags=$(git ls-remote --tags --refs "$REPO_URL" | sed 's/.*refs\/tags\///' | sort -V)
 
 # Counter for progress
@@ -33,28 +39,30 @@ skipped=0
 downloaded=0
 not_found=0
 
-echo "Found $total_tags tags. Checking for existing files and downloading missing ones..."
-echo
 
 # Loop through each tag
 for tag in $tags; do
-    current=$((current + 1))
-    echo "[$current/$total_tags] Processing tag: $tag"
+    current=$((current + 1))    
+    # Remove "-atlas" from the tag string, then remove ".0" from the end
+    clean_tag="${tag/-atlas/}"
     
-    # Check if we already have a file for this tag with any extension
+    # Check if the clean tag ends with "0"
+    if [[ ! "$clean_tag" =~ 0$ ]]; then
+        continue
+    fi
+        clean_tag="${clean_tag%.0}"
+    
+    # Check if we already have a file for this clean tag with any extension
     existing_file=""
-    if [ -f "$SAVE_DIR/$tag.json" ]; then
-        existing_file="$SAVE_DIR/$tag.json"
-    elif [ -f "$SAVE_DIR/$tag.txt" ]; then
-        existing_file="$SAVE_DIR/$tag.txt"
-    elif [ -f "$SAVE_DIR/$tag.data" ]; then
-        existing_file="$SAVE_DIR/$tag.data"
+    if [ -f "$SAVE_DIR/$clean_tag.json" ]; then
+        existing_file="$SAVE_DIR/$clean_tag.json"
+    elif [ -f "$SAVE_DIR/$clean_tag.txt" ]; then
+        existing_file="$SAVE_DIR/$clean_tag.txt"
+    elif [ -f "$SAVE_DIR/$clean_tag.data" ]; then
+        existing_file="$SAVE_DIR/$clean_tag.data"
     fi
     
     if [ -n "$existing_file" ]; then
-        echo "  ⏭️  File already exists: $existing_file"
-        skipped=$((skipped + 1))
-        echo
         continue
     fi
     
@@ -68,23 +76,18 @@ for tag in $tags; do
     
 
     
-    # Construct the URL for the source archive
+    # Construct the URL for the source archive (using original tag)
     zip_url="https://github.com/$GITHUB_REPO/archive/refs/tags/$tag.zip"
-    temp_zip="/tmp/${tag}_source.zip"
-    temp_dir="/tmp/${tag}_extract"
+    temp_zip="/tmp/${clean_tag}_source.zip"
+    temp_dir="/tmp/${clean_tag}_extract"
     
 
     
     # Download the source zip (follow redirects)
+    echo "[$current/$total_tags] Downloading tag: $tag -> $clean_tag"
     if curl -s -f -L -o "$temp_zip" "$zip_url"; then
-        echo "  ✓ Downloaded source archive"
-        
-        # Validate that we got a proper zip file
         if ! file "$temp_zip" | grep -q "Zip archive"; then
-            echo "  ⚠️  Downloaded file is not a valid zip archive (tag may not exist)"
-            not_found=$((not_found + 1))
             rm -f "$temp_zip"
-            echo
             continue
         fi
         
@@ -94,11 +97,6 @@ for tag in $tags; do
         
         # Extract the zip file
         if unzip -q "$temp_zip" -d "$temp_dir" 2>/dev/null; then
-            echo "  ✓ Extracted source archive"
-            
-            # Find the data.json file in the extracted directory
-            
-            # Find the actual extracted folder (there should be exactly one directory)
             extracted_folder=$(find "$temp_dir" -maxdepth 1 -type d ! -path "$temp_dir" | head -1)
             
             if [ -d "$extracted_folder" ]; then
@@ -113,58 +111,26 @@ for tag in $tags; do
                 fi
                 
                 if [ -n "$data_file" ]; then
-                    # Determine the correct extension based on the source file
                     source_filename=$(basename "$data_file")
                     if [[ "$source_filename" == "data.json" ]]; then
-                        output_file="$SAVE_DIR/$tag.json"
+                        output_file="$SAVE_DIR/$clean_tag.json"
+                        jq -c . "$data_file" > "$output_file"
                     elif [[ "$source_filename" == "data.txt" ]]; then
-                        output_file="$SAVE_DIR/$tag.txt"
-                    else
-                        output_file="$SAVE_DIR/$tag.data"
-                    fi
-                    
-                    # Check if file already exists
-                    if [ -f "$output_file" ]; then
-                        echo "  ⏭️  File already exists: $output_file"
-                        skipped=$((skipped + 1))
-                    else
-                        # Copy the data file to our target location with correct extension
+                        output_file="$SAVE_DIR/$clean_tag.txt"
                         cp "$data_file" "$output_file"
-                        echo "  ✓ Successfully extracted $(basename "$output_file") (from $source_filename)"
-                        downloaded=$((downloaded + 1))
+                    else
+                        output_file="$SAVE_DIR/$clean_tag.data"
+                        cp "$data_file" "$output_file"
                     fi
-                else
-                    echo "  ⚠️  No data file found (checked data.json, data.txt, data) in source archive for tag $tag"
-                    not_found=$((not_found + 1))
+                    downloaded=$((downloaded + 1))
                 fi
-            else
-                echo "  ⚠️  Extracted folder not found: $extracted_folder"
-                not_found=$((not_found + 1))
             fi
-        else
-            echo "  ✗ Failed to extract source archive for tag $tag (corrupted zip or tag doesn't exist)"
-            not_found=$((not_found + 1))
         fi
         
         # Clean up temporary files
         rm -f "$temp_zip"
         rm -rf "$temp_dir"
-    else
-        echo "  ✗ Failed to download source archive for tag $tag"
-        not_found=$((not_found + 1))
     fi
-    
-    echo
 done
 
 echo "Download complete!"
-echo
-echo "Summary:"
-echo "  Total tags processed: $total_tags"
-echo "  Files downloaded: $downloaded"
-echo "  Files skipped (already existed): $skipped"
-echo "  Files not found (404): $not_found"
-echo "  Save directory: $SAVE_DIR"
-echo
-echo "Files in save directory:"
-ls -la "$SAVE_DIR"/ | grep -E "\.json$" | wc -l | xargs echo "  Total JSON files:"

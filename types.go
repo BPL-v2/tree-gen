@@ -19,6 +19,24 @@ type Tree struct {
 	Points          PassivePoints                `json:"points"`
 }
 
+type CompactTree struct {
+	Groups map[string]CompactGroup `json:"groups"`
+	Nodes  map[string]CompactNode  `json:"nodes"`
+}
+
+type CompactGroup struct {
+	Nodes []string `json:"nodes"`
+}
+
+type CompactNode struct {
+	Name        *string  `json:"name,omitempty"`
+	Stats       []string `json:"stats,omitempty"`
+	IsMastery   bool     `json:"isMastery,omitempty"`
+	IsNotable   bool     `json:"isNotable,omitempty"`
+	IsKeystone  bool     `json:"isKeystone,omitempty"`
+	IsBloodline bool     `json:"isBloodline,omitempty"`
+}
+
 type Classes struct {
 	Name         string       `json:"name"`
 	BaseStr      int          `json:"base_str"`
@@ -85,6 +103,7 @@ type Node struct {
 	IsMastery              bool            `json:"isMastery,omitempty"`
 	IsKeystone             bool            `json:"isKeystone,omitempty"`
 	IsWormhole             bool            `json:"isWormhole,omitempty"`
+	IsBloodline            bool            `json:"isBloodline,omitempty"`
 	InactiveIcon           *string         `json:"inactiveIcon,omitempty"`
 	ActiveIcon             *string         `json:"activeIcon,omitempty"`
 	ActiveEffectImage      *string         `json:"activeEffectImage,omitempty"`
