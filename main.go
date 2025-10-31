@@ -319,10 +319,6 @@ func (d *TreeDrawer) DrawNode(node Node) {
 		classes = append(classes, "ascendancy")
 		extras = append(extras, *node.AscendancyName)
 	}
-	if node.IsBloodline {
-		classes = append(classes, "bloodline")
-		extras = append(extras, *node.AscendancyName)
-	}
 	if node.IsNotable {
 		d.DrawPassive(node, 50, classes, extras)
 	} else if node.IsKeystone || node.IsWormhole {
@@ -368,7 +364,7 @@ func (d *TreeDrawer) DrawConnection(node1 Node, node2 Node) {
 	}
 	attr := fmt.Sprintf("id=\"c-%d-%d\"", node1.Skill, node2.Skill)
 	if node1.AscendancyName != nil {
-		attr += fmt.Sprintf(" class=\"ascendancy %s\"", *node1.AscendancyName)
+		attr += fmt.Sprintf(" class=\"ascendancy\" data-extras=\"%s\"", *node1.AscendancyName)
 	}
 	if node1.Group == node2.Group && node1.Orbit == node2.Orbit {
 		d.DrawArc(node1, node2, attr)
