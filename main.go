@@ -62,11 +62,6 @@ func main() {
 		}
 	}
 
-	// http.Handle("/", http.HandlerFunc(circle))
-	// err := http.ListenAndServe(":2003", nil)
-	// if err != nil {
-	// 	log.Fatal("ListenAndServe:", err)
-	// }
 }
 
 type TreeDrawer struct {
@@ -311,10 +306,6 @@ func GetCoordinates(node Node, tree Tree) (int, int, error) {
 	return x, y, nil
 }
 
-func (d *TreeDrawer) End() {
-	d.s.End()
-}
-
 func (d *TreeDrawer) DrawNode(node Node) {
 	if !node.ShouldDraw() {
 		return
@@ -507,5 +498,5 @@ func DrawTree(fileName string, out string) {
 		drawer.DrawNode(node)
 	}
 	drawer.s.Gend()
-	drawer.End()
+	drawer.s.End()
 }
